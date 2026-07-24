@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 APP_START_ADDR = 0x08003000
-APP_END_ADDR = 0x08020000
+APP_END_ADDR = 0x0801F800
 BOOT_CMD_START = 1
 BOOT_CMD_DATA = 2
 BOOT_CMD_DONE = 3
@@ -28,6 +28,8 @@ CAN_FRAME_FORMAT = "=IB3x8s"
 CAN_FRAME_SIZE = struct.calcsize(CAN_FRAME_FORMAT)
 CANFD_FRAME_FORMAT = "=IBBBB64s"
 CANFD_FRAME_SIZE = struct.calcsize(CANFD_FRAME_FORMAT)
+# VBBoot commits data to flash in 8-byte doublewords.  An exact 8-byte payload
+# avoids carrying a partial internal buffer across CAN transfers.
 FD_DATA_CHUNK_SIZES = (7, 11, 15, 19, 23, 31, 47, 63)
 
 
@@ -46,7 +48,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--data-chunk-size",
         type=int,
-        default=11,
+        default=63,
         help="DATA bytes per command frame, excluding the command byte",
     )
     parser.add_argument(
@@ -57,6 +59,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--start-retries", type=int, default=8, help="Retries for the START handshake")
     parser.add_argument("--brs", action="store_true", help="Enable CAN FD bitrate switching")
+    parser.add_argument("--dry-run", action="store_true", help="Validate the image and print the transfer plan without opening CAN")
+    parser.add_argument("--progress-interval", type=float, default=2.0, help="Progress reporting interval in seconds")
     return parser.parse_args()
 
 
@@ -209,6 +213,12 @@ def main() -> int:
         f"brs={int(args.brs)} pace_ms={args.inter_frame_delay_ms:.3f}"
     )
 
+    total_frames = (total_size + args.data_chunk_size - 1) // args.data_chunk_size
+    print(f"transfer_plan_frames={total_frames} dry_run={int(args.dry_run)}")
+    if args.dry_run:
+        print("dry_run_complete")
+        return 0
+
     inter_frame_delay_s = max(args.inter_frame_delay_ms, 0.0) / 1000.0
 
     with open_can_socket(args.channel, ack_id, extended) as sock:
@@ -253,6 +263,8 @@ def main() -> int:
 
         offset = 0
         frame_index = 0
+        transfer_started = time.monotonic()
+        next_progress = transfer_started
         while offset < total_size:
             chunk = image[offset : offset + args.data_chunk_size]
             send_wait_ack(
@@ -267,8 +279,17 @@ def main() -> int:
             )
             offset += len(chunk)
             frame_index += 1
-            if (frame_index % 128) == 0 or offset == total_size:
-                print(f"data_progress={offset}/{total_size}")
+            now = time.monotonic()
+            if now >= next_progress or offset == total_size:
+                elapsed = max(now - transfer_started, 1e-6)
+                rate = offset / elapsed
+                eta = (total_size - offset) / rate if rate > 0.0 else float("inf")
+                print(
+                    f"data_progress={offset}/{total_size} frames={frame_index}/{total_frames} "
+                    f"rate_Bps={rate:.1f} eta_s={eta:.1f}",
+                    flush=True,
+                )
+                next_progress = now + max(args.progress_interval, 0.1)
 
         send_wait_ack(
             sock,
