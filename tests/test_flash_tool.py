@@ -31,3 +31,10 @@ def test_hex_loader_rejects_image_outside_application(tmp_path: Path) -> None:
         assert "empty image" in str(exc)
     else:
         raise AssertionError("bootloader-region image was accepted as an application")
+
+
+def test_success_message_requires_runtime_verification() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+
+    assert 'print("flash_complete")' in source
+    assert 'print("post_flash_verification_required=application_node_and_safe_state")' in source
