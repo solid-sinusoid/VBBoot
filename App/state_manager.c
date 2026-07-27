@@ -8,9 +8,9 @@ void configure_fdcan(FDCAN_HandleTypeDef* hfdcan, const BootTransportConfig* con
     hfdcan->Init.AutoRetransmission = ENABLE;
     hfdcan->Init.TransmitPause = DISABLE;
     hfdcan->Init.ProtocolException = DISABLE;
-    hfdcan->Init.NominalSyncJumpWidth = 24;
-    hfdcan->Init.NominalTimeSeg1 = 55;
-    hfdcan->Init.NominalTimeSeg2 = 24;
+    hfdcan->Init.NominalSyncJumpWidth = 20;
+    hfdcan->Init.NominalTimeSeg1 = 59;
+    hfdcan->Init.NominalTimeSeg2 = 20;
     hfdcan->Init.DataSyncJumpWidth = 4;
     hfdcan->Init.DataTimeSeg1 = 5;
     hfdcan->Init.DataTimeSeg2 = 4;
