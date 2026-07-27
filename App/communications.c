@@ -12,6 +12,11 @@ static uint8_t g_uart_len = 0U;
 static uint8_t g_uart_pos = 0U;
 static uint8_t g_uart_crc = 0U;
 static uint8_t g_uart_state = 0U;
+static bool g_boot_update_activity_seen = false;
+
+bool boot_update_activity_seen(void) {
+    return g_boot_update_activity_seen;
+}
 
 static uint32_t read_u32_le(const uint8_t* p) {
     return ((uint32_t)p[0]) |
@@ -101,8 +106,14 @@ void boot_process_command(const uint8_t* p, size_t payload_size, void (*send_sta
                 return;
             }
             g_start_size = read_u32_le(&p[2]);
+            if ((g_start_size == 0U) ||
+                (g_start_size > (APP_END_ADDR - APP_START_ADDR))) {
+                send_status(BL_STATUS_ERR);
+                return;
+            }
             g_start_crc_low = (uint16_t)p[6] | ((uint16_t)p[7] << 8U);
             g_start_part0_ready = true;
+            g_boot_update_activity_seen = true;
             g_write_offset = 0U;
             g_data_buf_len = 0U;
             send_status(BL_STATUS_DONE);
@@ -191,7 +202,12 @@ void boot_process_command(const uint8_t* p, size_t payload_size, void (*send_sta
             while (HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) != 3U) {
             }
             boot_diag_text("JDONE");
-            boot_jump_to_application();
+            /*
+             * Start the new application from reset state.  A direct jump after
+             * using FDCAN can carry enabled or pending interrupts and peripheral
+             * state across the bootloader/application boundary.
+             */
+            NVIC_SystemReset();
         } else {
             send_status(BL_STATUS_ERR);
             boot_diag_note_fdcan_status("done-reject");

@@ -12,12 +12,16 @@
 #define BL_ACK_ID_MASK 0x400U
 
 #define APP_START_ADDR 0x08003000UL
-#define APP_END_ADDR 0x08020000UL
+#define APP_END_ADDR 0x0801F800UL
 #define BOOT_FLASH_PAGE_SIZE 0x800UL
+#define BOOT_METADATA_ADDR 0x0801F800UL
+#define BOOT_METADATA_MAGIC 0x424F4F54UL
 #define NODE_ID_EEPROM_I2C_DEV_ADDR 0x50U
 #define NODE_ID_EEPROM_MEM_ADDR 0x0000U
 #define NODE_ID_MAGIC 0x424C4E49UL
 #define BOOT_REQUEST_MAGIC 0xB00710ADUL
+#define BOOT_LAUNCH_APP_MAGIC 0xA991CAFEUL
+#define BOOT_RECOVERY_WINDOW_MS 1000UL
 
 typedef struct __attribute__((packed)) {
     uint32_t magic;
@@ -64,6 +68,7 @@ extern FDCAN_HandleTypeDef hfdcan1;
 BootSession* get_boot_session(void);
 uint32_t node_id_read(void);
 bool bootloader_start_requested(void);
+bool boot_update_activity_seen(void);
 void transport_config_load(void);
 const BootTransportConfig* transport_config_get(void);
 uint32_t boot_command_can_id(void);
