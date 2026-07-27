@@ -3,9 +3,30 @@
 `VBBoot` is a minimal CAN bootloader for STM32G431.
 
 The bootloader:
-- checks application validity at startup and jumps to app if valid;
-- otherwise stays in boot mode and accepts firmware frames over CAN FD with BRS (`FDCAN_FRAME_FD_BRS`);
-- writes firmware to flash at `0x08003000..0x0801FFFF`.
+- checks application validity at startup;
+- exposes a 1-second CAN recovery window before starting a valid application;
+- otherwise stays in boot mode and accepts firmware frames using the configured
+  Classic CAN or CAN FD/BRS transport;
+- writes firmware to flash at `0x08003000..0x0801F7FF`;
+- reserves `0x0801F800..0x0801FFFF` for persistent boot transport metadata.
+
+## Recovery window
+
+On a normal reset with a valid application and no explicit boot request, VBBoot
+listens on the drive's bootloader CAN ID for one second. A valid
+`BOOT_CMD_START` part 0 keeps the device in the bootloader so a broken
+application can be replaced without ST-Link.
+
+If no update begins, VBBoot stores a one-shot launch marker and performs
+`NVIC_SystemReset()`. On the clean reset it consumes the marker and starts the
+application before initializing FDCAN. This avoids carrying bootloader FDCAN
+state into VBDrive.
+
+When VBDrive explicitly requests the bootloader, the requested node ID and CAN
+timing are stored with value/inverse validation in the final flash page. Future
+recovery windows therefore use the drive's own boot ID even after a cold power
+cycle. The shared `0x444` fallback is used only before a drive has been
+provisioned once.
 
 ## Boot Transport (CAN)
 
@@ -23,7 +44,9 @@ The bootloader:
   - Frame: `[0x02, data...]`
   - Data is buffered and written to flash in 8-byte aligned chunks.
 - `BOOT_CMD_DONE` (`0x03`)
-  - Finalize, verify size + CRC32, ACK and jump to app on success.
+  - Finalize, verify size + CRC32, ACK and perform a system reset on success.
+  - The reset prevents pending CAN interrupts and peripheral state from leaking
+    from the bootloader into the newly flashed application.
 
 `BOOT_CMD_GET_ID` enum value exists in code (`0x05`) but is not handled in transport state machine.
 
@@ -109,6 +132,8 @@ Post-build artifacts:
 
 - Bootloader flash region: `0x08000000`, length `12K` (see linker script).
 - Application start: `0x08003000` (`APP_START_ADDR`).
+- Application end: `0x0801F800` (exclusive).
+- Boot metadata page: `0x0801F800`, length `2K`.
 
 ## Python CAN test
 
