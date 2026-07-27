@@ -7,6 +7,13 @@
 #define FLASH_SR_RUNTIME_ERRORS (FLASH_SR_OPERR | FLASH_SR_PROGERR | FLASH_SR_WRPERR | FLASH_SR_PGAERR | \
                                  FLASH_SR_SIZERR | FLASH_SR_PGSERR | FLASH_SR_MISERR | FLASH_SR_FASTERR | \
                                  FLASH_SR_RDERR | FLASH_SR_OPTVERR)
+
+typedef struct {
+    uint32_t magic;
+    uint32_t packed_transport;
+    uint32_t packed_transport_inverse;
+    uint32_t magic_inverse;
+} BootMetadataRecord;
 #define BOOT_RAMFUNC __attribute__((section(".RamFunc"), noinline))
 
 static BOOT_RAMFUNC HAL_StatusTypeDef flash_wait_ready_ram(void) {
@@ -233,6 +240,63 @@ bool boot_write_chunk(uint32_t offset, const uint8_t* data, uint8_t len, uint32_
     }
     HAL_FLASH_Lock();
     return true;
+}
+
+bool boot_metadata_read_transport(uint32_t* packed) {
+    const BootMetadataRecord* const record =
+        (const BootMetadataRecord*)BOOT_METADATA_ADDR;
+
+    if ((packed == NULL) ||
+        (record->magic != BOOT_METADATA_MAGIC) ||
+        (record->magic_inverse != ~BOOT_METADATA_MAGIC) ||
+        (record->packed_transport_inverse != ~record->packed_transport)) {
+        return false;
+    }
+
+    *packed = record->packed_transport;
+    return true;
+}
+
+bool boot_metadata_store_transport(uint32_t packed) {
+    BootMetadataRecord record = {
+        .magic = BOOT_METADATA_MAGIC,
+        .packed_transport = packed,
+        .packed_transport_inverse = ~packed,
+        .magic_inverse = ~BOOT_METADATA_MAGIC
+    };
+    uint32_t existing = 0U;
+    uint32_t page_error = 0U;
+    uint64_t first_doubleword;
+    uint64_t second_doubleword;
+
+    if (boot_metadata_read_transport(&existing) && (existing == packed)) {
+        return true;
+    }
+
+    first_doubleword =
+        ((uint64_t)record.packed_transport << 32U) | (uint64_t)record.magic;
+    second_doubleword =
+        ((uint64_t)record.magic_inverse << 32U) |
+        (uint64_t)record.packed_transport_inverse;
+
+    if (HAL_FLASH_Unlock() != HAL_OK) {
+        return false;
+    }
+    __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_ALL_ERRORS);
+
+    if (flash_erase_pages_ram(
+            flash_page_for_address(BOOT_METADATA_ADDR), 1U, &page_error) != HAL_OK) {
+        HAL_FLASH_Lock();
+        return false;
+    }
+    if ((flash_program_doubleword_ram(BOOT_METADATA_ADDR, first_doubleword) != HAL_OK) ||
+        (flash_program_doubleword_ram(BOOT_METADATA_ADDR + 8U, second_doubleword) != HAL_OK)) {
+        HAL_FLASH_Lock();
+        return false;
+    }
+    HAL_FLASH_Lock();
+
+    return boot_metadata_read_transport(&existing) && (existing == packed);
 }
 
 uint32_t crc32_update(uint32_t crc, const uint8_t* data, size_t len) {

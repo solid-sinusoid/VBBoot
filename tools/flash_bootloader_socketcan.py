@@ -303,6 +303,7 @@ def main() -> int:
         )
 
     print("flash_complete")
+    print("post_flash_verification_required=application_node_and_safe_state")
     return 0
 
 
