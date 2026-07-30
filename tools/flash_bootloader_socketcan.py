@@ -46,6 +46,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--ack-timeout", type=float, default=1.5, help="ACK timeout in seconds")
     parser.add_argument(
+        "--start-ack-timeout",
+        type=float,
+        default=5.0,
+        help="ACK timeout for each START probe; use a short value to catch the cold-start recovery window",
+    )
+    parser.add_argument(
         "--data-chunk-size",
         type=int,
         default=63,
@@ -221,30 +227,25 @@ def main() -> int:
 
     inter_frame_delay_s = max(args.inter_frame_delay_ms, 0.0) / 1000.0
 
-    with open_can_socket(args.channel, ack_id, extended) as sock:
-        start_timeout = max(args.ack_timeout, 5.0)
-        start_part0 = (
-            bytes([BOOT_CMD_START, 0]) + struct.pack("<I", total_size) + struct.pack("<H", crc32 & 0xFFFF)
-        )
-        start_part1 = bytes([BOOT_CMD_START, 1]) + struct.pack("<H", (crc32 >> 16) & 0xFFFF)
-        last_start_error: Exception | None = None
+    start_timeout = max(args.start_ack_timeout, 0.01)
+    start_part0 = (
+        bytes([BOOT_CMD_START, 0]) + struct.pack("<I", total_size) + struct.pack("<H", crc32 & 0xFFFF)
+    )
+    start_part1 = bytes([BOOT_CMD_START, 1]) + struct.pack("<H", (crc32 >> 16) & 0xFFFF)
+    last_start_error: Exception | None = None
+
+    # Recovery probing intentionally uses a disposable socket.  A response can
+    # arrive just after a short probe timeout and remain queued.  Reusing that
+    # socket would let the stale ACK satisfy START[1] or a DATA request, putting
+    # the host one frame ahead of the bootloader and silently dropping data.
+    with open_can_socket(args.channel, ack_id, extended) as probe_sock:
         for attempt in range(max(args.start_retries, 1)):
             try:
                 send_wait_ack(
-                    sock,
+                    probe_sock,
                     command_id,
                     ack_id,
                     start_part0,
-                    start_timeout,
-                    args.brs,
-                    extended,
-                    inter_frame_delay_s,
-                )
-                send_wait_ack(
-                    sock,
-                    command_id,
-                    ack_id,
-                    start_part1,
                     start_timeout,
                     args.brs,
                     extended,
@@ -258,8 +259,32 @@ def main() -> int:
                 last_start_error = exc
                 print(f"start_retry={attempt + 1}/{max(args.start_retries, 1)} failed: {exc}")
                 time.sleep(0.2)
-        if last_start_error is not None:
-            raise last_start_error
+    if last_start_error is not None:
+        raise last_start_error
+
+    # Closing probe_sock discards all delayed probe ACKs.  Repeat both START
+    # parts on a fresh socket before erasing/writing the application.
+    with open_can_socket(args.channel, ack_id, extended) as sock:
+        send_wait_ack(
+            sock,
+            command_id,
+            ack_id,
+            start_part0,
+            args.ack_timeout,
+            args.brs,
+            extended,
+            inter_frame_delay_s,
+        )
+        send_wait_ack(
+            sock,
+            command_id,
+            ack_id,
+            start_part1,
+            args.ack_timeout,
+            args.brs,
+            extended,
+            inter_frame_delay_s,
+        )
 
         offset = 0
         frame_index = 0

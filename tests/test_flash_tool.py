@@ -38,3 +38,50 @@ def test_success_message_requires_runtime_verification() -> None:
 
     assert 'print("flash_complete")' in source
     assert 'print("post_flash_verification_required=application_node_and_safe_state")' in source
+
+
+def test_recovery_probe_acks_cannot_leak_into_transfer(monkeypatch, tmp_path: Path) -> None:
+    image = tmp_path / "candidate.hex"
+    image.write_text(
+        ":020000040800F2\n"
+        ":0130000001CE\n"
+        ":00000001FF\n",
+        encoding="ascii",
+    )
+
+    class FakeSocket:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+    sockets = [FakeSocket("probe"), FakeSocket("transfer")]
+    opened = []
+    sent = []
+
+    def fake_open(*_args):
+        sock = sockets[len(opened)]
+        opened.append(sock.name)
+        return sock
+
+    def fake_send(sock, _command_id, _ack_id, payload, *_args):
+        sent.append((sock.name, payload[0], payload[1] if len(payload) > 1 else None))
+
+    monkeypatch.setattr(MODULE, "open_can_socket", fake_open)
+    monkeypatch.setattr(MODULE, "send_wait_ack", fake_send)
+    monkeypatch.setattr(
+        MODULE.sys,
+        "argv",
+        ["flash", "--hex", str(image), "--start-retries", "1"],
+    )
+
+    assert MODULE.main() == 0
+    assert opened == ["probe", "transfer"]
+    assert sent[0] == ("probe", MODULE.BOOT_CMD_START, 0)
+    assert sent[1] == ("transfer", MODULE.BOOT_CMD_START, 0)
+    assert sent[2] == ("transfer", MODULE.BOOT_CMD_START, 1)
+    assert all(sock_name == "transfer" for sock_name, *_ in sent[1:])

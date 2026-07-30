@@ -478,15 +478,23 @@ bool boot_on_data(uint32_t offset, const uint8_t* data, uint8_t size) {
 }
 
 bool boot_on_done(void) {
-    uint32_t final_crc;
+    uint32_t received_crc;
+    uint32_t flash_crc;
     bool ok;
 
     if (boot_session.state != BootStateReceiving) {
         return false;
     }
     boot_session.state = BootStateVerifyCrc;
-    final_crc = boot_session.running_crc32 ^ 0xFFFFFFFFUL;
-    ok = (boot_session.received_size == boot_session.expected_size) && (final_crc == boot_session.expected_crc32);
+    received_crc = boot_session.running_crc32 ^ 0xFFFFFFFFUL;
+    flash_crc = crc32_update(
+        0xFFFFFFFFUL,
+        (const uint8_t*)APP_START_ADDR,
+        boot_session.expected_size
+    ) ^ 0xFFFFFFFFUL;
+    ok = (boot_session.received_size == boot_session.expected_size) &&
+         (received_crc == boot_session.expected_crc32) &&
+         (flash_crc == boot_session.expected_crc32);
     if (!ok) {
         boot_session.state = BootStateError;
         return false;

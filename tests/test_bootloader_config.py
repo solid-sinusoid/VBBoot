@@ -52,6 +52,18 @@ def test_successful_update_resets_before_starting_application() -> None:
     assert "boot_jump_to_application();" not in done_case
 
 
+def test_successful_update_verifies_crc_from_flash() -> None:
+    source = Path(__file__).resolve().parents[1] / "App" / "app.c"
+    text = source.read_text(encoding="utf-8")
+    done_function = text.split("bool boot_on_done(void)", maxsplit=1)[1].split(
+        "bool is_application_valid(void)", maxsplit=1
+    )[0]
+
+    assert "(const uint8_t*)APP_START_ADDR" in done_function
+    assert "flash_crc == boot_session.expected_crc32" in done_function
+    assert "received_crc == boot_session.expected_crc32" in done_function
+
+
 def test_recovery_window_resets_before_starting_application() -> None:
     header = Path(__file__).resolve().parents[1] / "App" / "app.h"
     source = Path(__file__).resolve().parents[1] / "App" / "app.c"
