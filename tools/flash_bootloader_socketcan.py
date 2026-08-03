@@ -11,6 +11,13 @@ from pathlib import Path
 
 APP_START_ADDR = 0x08003000
 APP_END_ADDR = 0x0801F800
+APP_MANIFEST_ADDR = 0x0801F7C0
+APP_MANIFEST_FORMAT = "<IHHIIIIII"
+APP_MANIFEST_MAGIC = 0x50414256
+APP_MANIFEST_VERSION = 1
+APP_MANIFEST_BOARD_ID = 0x31444256
+APP_CONFIG_ABI = 0x44AAABFF
+APP_BOOT_PROTOCOL = 1
 BOOT_CMD_START = 1
 BOOT_CMD_DATA = 2
 BOOT_CMD_DONE = 3
@@ -117,6 +124,47 @@ def load_intel_hex(path: Path) -> bytes:
     return bytes(image)
 
 
+def validate_application_manifest(image: bytes) -> dict[str, int]:
+    offset = APP_MANIFEST_ADDR - APP_START_ADDR
+    manifest_size = struct.calcsize(APP_MANIFEST_FORMAT)
+    if len(image) < offset + manifest_size:
+        raise ValueError(
+            "application compatibility manifest is missing; refusing to erase a drive with an unversioned image"
+        )
+
+    fields = struct.unpack_from(APP_MANIFEST_FORMAT, image, offset)
+    names = (
+        "magic",
+        "format_version",
+        "header_size",
+        "board_id",
+        "config_abi",
+        "boot_protocol",
+        "app_start",
+        "app_end",
+        "flags",
+    )
+    manifest = dict(zip(names, fields))
+    expected = {
+        "magic": APP_MANIFEST_MAGIC,
+        "format_version": APP_MANIFEST_VERSION,
+        "header_size": manifest_size,
+        "board_id": APP_MANIFEST_BOARD_ID,
+        "config_abi": APP_CONFIG_ABI,
+        "boot_protocol": APP_BOOT_PROTOCOL,
+        "app_start": APP_START_ADDR,
+        "app_end": APP_END_ADDR,
+    }
+    mismatches = [
+        f"{name}=0x{manifest[name]:X} expected=0x{value:X}"
+        for name, value in expected.items()
+        if manifest[name] != value
+    ]
+    if mismatches:
+        raise ValueError("incompatible application manifest: " + ", ".join(mismatches))
+    return manifest
+
+
 def normalize_can_id(can_id: int, extended: bool) -> int:
     return can_id & (CAN_EFF_MASK if extended else CAN_SFF_MASK)
 
@@ -200,6 +248,7 @@ def main() -> int:
         )
 
     image = load_intel_hex(Path(args.hex))
+    manifest = validate_application_manifest(image)
     crc32 = binascii.crc32(image) & 0xFFFFFFFF
     total_size = len(image)
 
@@ -211,6 +260,10 @@ def main() -> int:
     print(
         f"image_size={total_size} crc32=0x{crc32:08X} chunk={args.data_chunk_size} "
         f"brs={int(args.brs)} pace_ms={args.inter_frame_delay_ms:.3f}"
+    )
+    print(
+        f"manifest=ok board_id=0x{manifest['board_id']:08X} "
+        f"config_abi=0x{manifest['config_abi']:08X} boot_protocol={manifest['boot_protocol']}"
     )
 
     total_frames = (total_size + args.data_chunk_size - 1) // args.data_chunk_size

@@ -1,4 +1,5 @@
 import importlib.util
+import struct
 from pathlib import Path
 
 
@@ -38,3 +39,57 @@ def test_success_message_requires_runtime_verification() -> None:
 
     assert 'print("flash_complete")' in source
     assert 'print("post_flash_verification_required=application_node_and_safe_state")' in source
+
+
+def application_image_with_manifest(*, board_id: int = 0x31444256) -> bytes:
+    manifest_offset = 0x1C7C0
+    manifest = struct.pack(
+        "<IHHIIIIII",
+        0x50414256,
+        1,
+        32,
+        board_id,
+        0x44AAABFF,
+        1,
+        0x08003000,
+        0x0801F800,
+        0,
+    )
+    return bytes(manifest_offset) + manifest
+
+
+def test_application_manifest_accepts_the_supported_firmware_contract() -> None:
+    manifest = MODULE.validate_application_manifest(application_image_with_manifest())
+
+    assert manifest == {
+        "magic": 0x50414256,
+        "format_version": 1,
+        "header_size": 32,
+        "board_id": 0x31444256,
+        "config_abi": 0x44AAABFF,
+        "boot_protocol": 1,
+        "app_start": 0x08003000,
+        "app_end": 0x0801F800,
+        "flags": 0,
+    }
+
+
+def test_application_manifest_rejects_an_unversioned_image_before_flashing() -> None:
+    try:
+        MODULE.validate_application_manifest(bytes(0x1C7C0))
+    except ValueError as exc:
+        assert "manifest is missing" in str(exc)
+    else:
+        raise AssertionError("unversioned firmware image was accepted")
+
+
+def test_application_manifest_rejects_a_different_board() -> None:
+    try:
+        MODULE.validate_application_manifest(
+            application_image_with_manifest(board_id=0xDEADBEEF)
+        )
+    except ValueError as exc:
+        assert "board_id=0xDEADBEEF" in str(exc)
+        assert "expected=0x31444256" in str(exc)
+    else:
+        raise AssertionError("firmware for another board was accepted")
