@@ -494,7 +494,8 @@ bool boot_on_done(void) {
     ) ^ 0xFFFFFFFFUL;
     ok = (boot_session.received_size == boot_session.expected_size) &&
          (received_crc == boot_session.expected_crc32) &&
-         (flash_crc == boot_session.expected_crc32);
+         (flash_crc == boot_session.expected_crc32) &&
+         is_application_valid();
     if (!ok) {
         boot_session.state = BootStateError;
         return false;
@@ -503,6 +504,8 @@ bool boot_on_done(void) {
 }
 
 bool is_application_valid(void) {
+    const BootApplicationManifest* const manifest =
+        (const BootApplicationManifest*)APP_MANIFEST_ADDR;
     const uint32_t app_sp = *(const uint32_t*)APP_START_ADDR;
     const uint32_t app_reset = *(const uint32_t*)(APP_START_ADDR + 4U);
     const uint32_t app_nmi = *(const uint32_t*)(APP_START_ADDR + 8U);
@@ -513,6 +516,15 @@ bool is_application_valid(void) {
     const bool hardfault_ok = (app_hardfault >= APP_START_ADDR) &&
                               (app_hardfault < APP_END_ADDR) &&
                               ((app_hardfault & 0x1UL) != 0U);
+    const bool manifest_ok =
+        (manifest->magic == APP_MANIFEST_MAGIC) &&
+        (manifest->format_version == APP_MANIFEST_FORMAT_VERSION) &&
+        (manifest->header_size == sizeof(BootApplicationManifest)) &&
+        (manifest->board_id == APP_MANIFEST_BOARD_ID) &&
+        (manifest->config_abi == VBDRIVE_CONFIG_TYPE_ID) &&
+        (manifest->boot_protocol == APP_BOOT_PROTOCOL_VERSION) &&
+        (manifest->app_start == APP_START_ADDR) &&
+        (manifest->app_end == APP_END_ADDR);
 
     if ((app_sp == 0xFFFFFFFFUL) ||
         (app_reset == 0xFFFFFFFFUL) ||
@@ -521,7 +533,7 @@ bool is_application_valid(void) {
         return false;
     }
 
-    return stack_ok && reset_ok && nmi_ok && hardfault_ok;
+    return stack_ok && reset_ok && nmi_ok && hardfault_ok && manifest_ok;
 }
 
 void app(void) {

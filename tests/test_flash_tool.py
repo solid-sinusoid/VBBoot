@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+import struct
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "tools" / "flash_bootloader_socketcan.py"
@@ -74,6 +75,15 @@ def test_recovery_probe_acks_cannot_leak_into_transfer(monkeypatch, tmp_path: Pa
     monkeypatch.setattr(MODULE, "open_can_socket", fake_open)
     monkeypatch.setattr(MODULE, "send_wait_ack", fake_send)
     monkeypatch.setattr(
+        MODULE,
+        "validate_application_manifest",
+        lambda _image: {
+            "board_id": MODULE.APP_MANIFEST_BOARD_ID,
+            "config_abi": MODULE.APP_CONFIG_ABI,
+            "boot_protocol": MODULE.APP_BOOT_PROTOCOL,
+        },
+    )
+    monkeypatch.setattr(
         MODULE.sys,
         "argv",
         ["flash", "--hex", str(image), "--start-retries", "1"],
@@ -85,3 +95,62 @@ def test_recovery_probe_acks_cannot_leak_into_transfer(monkeypatch, tmp_path: Pa
     assert sent[1] == ("transfer", MODULE.BOOT_CMD_START, 0)
     assert sent[2] == ("transfer", MODULE.BOOT_CMD_START, 1)
     assert all(sock_name == "transfer" for sock_name, *_ in sent[1:])
+
+
+def _manifest_image(**overrides: int) -> bytes:
+    values = {
+        "magic": MODULE.APP_MANIFEST_MAGIC,
+        "format_version": MODULE.APP_MANIFEST_VERSION,
+        "header_size": struct.calcsize(MODULE.APP_MANIFEST_FORMAT),
+        "board_id": MODULE.APP_MANIFEST_BOARD_ID,
+        "config_abi": MODULE.APP_CONFIG_ABI,
+        "boot_protocol": MODULE.APP_BOOT_PROTOCOL,
+        "app_start": MODULE.APP_START_ADDR,
+        "app_end": MODULE.APP_END_ADDR,
+        "flags": 0,
+    }
+    values.update(overrides)
+    image = bytearray([0xFF] * (MODULE.APP_MANIFEST_ADDR - MODULE.APP_START_ADDR))
+    image.extend(struct.pack(MODULE.APP_MANIFEST_FORMAT, *values.values()))
+    return bytes(image)
+
+
+def test_valid_application_manifest_is_accepted() -> None:
+    manifest = MODULE.validate_application_manifest(_manifest_image())
+    assert manifest["config_abi"] == MODULE.APP_CONFIG_ABI
+
+
+def test_incompatible_config_abi_is_rejected() -> None:
+    try:
+        MODULE.validate_application_manifest(_manifest_image(config_abi=0x44AAABFE))
+    except ValueError as exc:
+        assert "config_abi" in str(exc)
+    else:
+        raise AssertionError("incompatible EEPROM ABI was accepted")
+
+
+def test_missing_manifest_is_rejected_before_can_is_opened(monkeypatch, tmp_path: Path) -> None:
+    image = tmp_path / "unversioned.hex"
+    image.write_text(
+        ":020000040800F2\n"
+        ":0130000001CE\n"
+        ":00000001FF\n",
+        encoding="ascii",
+    )
+    can_opened = False
+
+    def fake_open(*_args):
+        nonlocal can_opened
+        can_opened = True
+        raise AssertionError("CAN must not be opened for an unversioned image")
+
+    monkeypatch.setattr(MODULE, "open_can_socket", fake_open)
+    monkeypatch.setattr(MODULE.sys, "argv", ["flash", "--hex", str(image)])
+
+    try:
+        MODULE.main()
+    except ValueError as exc:
+        assert "manifest is missing" in str(exc)
+    else:
+        raise AssertionError("unversioned firmware was accepted")
+    assert not can_opened

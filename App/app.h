@@ -25,6 +25,11 @@
 
 #define APP_START_ADDR 0x08003000UL
 #define APP_END_ADDR 0x0801F800UL
+#define APP_MANIFEST_ADDR 0x0801F7C0UL
+#define APP_MANIFEST_MAGIC 0x50414256UL
+#define APP_MANIFEST_FORMAT_VERSION 1U
+#define APP_MANIFEST_BOARD_ID 0x31444256UL
+#define APP_BOOT_PROTOCOL_VERSION 1UL
 #define BOOT_FLASH_PAGE_SIZE 0x800UL
 #define CONFIG_EEPROM_I2C_DEV_ADDR 0x50U
 #define CONFIG_EEPROM_MEM_ADDR 0x0000U
@@ -44,6 +49,21 @@ typedef struct __attribute__((packed)) {
     uint32_t type_id;
 } BootEepromConfigPrefix;
 _Static_assert(sizeof(BootEepromConfigPrefix) == 8U, "Boot EEPROM config prefix must match BaseConfigData");
+
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    uint16_t format_version;
+    uint16_t header_size;
+    uint32_t board_id;
+    uint32_t config_abi;
+    uint32_t boot_protocol;
+    uint32_t app_start;
+    uint32_t app_end;
+    uint32_t flags;
+} BootApplicationManifest;
+_Static_assert(sizeof(BootApplicationManifest) == 32U, "Application manifest must remain stable");
+_Static_assert(APP_MANIFEST_ADDR + sizeof(BootApplicationManifest) <= APP_END_ADDR,
+               "Application manifest must fit before recovery metadata");
 
 // Ensure that this matches `libvoltbro/voltbro/config/serial/serial.h` FDCANNominalBaud EXACTLY
 typedef enum {

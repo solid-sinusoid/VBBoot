@@ -62,6 +62,22 @@ def test_successful_update_verifies_crc_from_flash() -> None:
     assert "(const uint8_t*)APP_START_ADDR" in done_function
     assert "flash_crc == boot_session.expected_crc32" in done_function
     assert "received_crc == boot_session.expected_crc32" in done_function
+    assert "is_application_valid()" in done_function
+
+
+def test_app_manifest_is_required_before_booting() -> None:
+    header = Path(__file__).resolve().parents[1] / "App" / "app.h"
+    source = Path(__file__).resolve().parents[1] / "App" / "app.c"
+    header_text = header.read_text(encoding="utf-8")
+    app_text = source.read_text(encoding="utf-8")
+    validity = app_text.split("bool is_application_valid(void)", maxsplit=1)[1].split(
+        "void app(void)", maxsplit=1
+    )[0]
+
+    assert "#define APP_MANIFEST_ADDR 0x0801F7C0UL" in header_text
+    assert "manifest->config_abi == VBDRIVE_CONFIG_TYPE_ID" in validity
+    assert "manifest->board_id == APP_MANIFEST_BOARD_ID" in validity
+    assert "manifest_ok" in validity
 
 
 def test_recovery_window_resets_before_starting_application() -> None:
