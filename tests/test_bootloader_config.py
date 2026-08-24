@@ -86,7 +86,7 @@ def test_recovery_window_resets_before_starting_application() -> None:
     header_text = header.read_text(encoding="utf-8")
     app_text = source.read_text(encoding="utf-8")
 
-    assert "#define BOOT_RECOVERY_WINDOW_MS 10000UL" in header_text
+    assert "#define BOOT_RECOVERY_WINDOW_MS 1000UL" in header_text
     assert "boot_update_activity_seen()" in app_text
     assert "boot_launch_app_marker_set();" in app_text
     assert "NVIC_SystemReset();" in app_text

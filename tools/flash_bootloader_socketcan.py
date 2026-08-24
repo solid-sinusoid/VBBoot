@@ -55,13 +55,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--start-ack-timeout",
         type=float,
-        default=0.2,
+        default=0.08,
         help="ACK timeout for each START probe; use a short value to catch the cold-start recovery window",
     )
     parser.add_argument(
         "--start-retry-delay",
         type=float,
-        default=0.05,
+        default=0.02,
         help="Delay between failed START probes in seconds",
     )
     parser.add_argument(
@@ -76,7 +76,7 @@ def parse_args() -> argparse.Namespace:
         default=0.0,
         help="Delay after each successful ACK before sending the next frame",
     )
-    parser.add_argument("--start-retries", type=int, default=60, help="Retries for the START handshake")
+    parser.add_argument("--start-retries", type=int, default=200, help="Retries for the START handshake")
     parser.add_argument("--brs", action="store_true", help="Enable CAN FD bitrate switching")
     parser.add_argument("--dry-run", action="store_true", help="Validate the image and print the transfer plan without opening CAN")
     parser.add_argument("--progress-interval", type=float, default=2.0, help="Progress reporting interval in seconds")

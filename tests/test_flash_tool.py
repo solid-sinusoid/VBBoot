@@ -23,9 +23,9 @@ def test_default_start_probe_retries_fit_inside_legacy_recovery_window(monkeypat
     monkeypatch.setattr(MODULE.sys, "argv", ["flash", "--hex", "candidate.hex"])
     args = MODULE.parse_args()
 
-    assert args.start_ack_timeout <= 0.2
-    assert args.start_retry_delay <= 0.05
-    assert args.start_retries >= 60
+    assert args.start_ack_timeout <= 0.08
+    assert args.start_retry_delay <= 0.02
+    assert args.start_retries >= 200
 
 
 def test_final_flash_page_is_reserved_for_transaction_metadata() -> None:
