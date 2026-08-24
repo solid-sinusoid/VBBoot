@@ -19,6 +19,15 @@ def test_default_uses_full_can_fd_payload(monkeypatch) -> None:
     assert MODULE.parse_args().data_chunk_size == 63
 
 
+def test_default_start_probe_retries_fit_inside_legacy_recovery_window(monkeypatch) -> None:
+    monkeypatch.setattr(MODULE.sys, "argv", ["flash", "--hex", "candidate.hex"])
+    args = MODULE.parse_args()
+
+    assert args.start_ack_timeout <= 0.2
+    assert args.start_retry_delay <= 0.05
+    assert args.start_retries >= 60
+
+
 def test_final_flash_page_is_reserved_for_transaction_metadata() -> None:
     assert MODULE.APP_END_ADDR == 0x0801F800
 

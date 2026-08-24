@@ -55,8 +55,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--start-ack-timeout",
         type=float,
-        default=5.0,
+        default=0.2,
         help="ACK timeout for each START probe; use a short value to catch the cold-start recovery window",
+    )
+    parser.add_argument(
+        "--start-retry-delay",
+        type=float,
+        default=0.05,
+        help="Delay between failed START probes in seconds",
     )
     parser.add_argument(
         "--data-chunk-size",
@@ -70,7 +76,7 @@ def parse_args() -> argparse.Namespace:
         default=0.0,
         help="Delay after each successful ACK before sending the next frame",
     )
-    parser.add_argument("--start-retries", type=int, default=8, help="Retries for the START handshake")
+    parser.add_argument("--start-retries", type=int, default=60, help="Retries for the START handshake")
     parser.add_argument("--brs", action="store_true", help="Enable CAN FD bitrate switching")
     parser.add_argument("--dry-run", action="store_true", help="Validate the image and print the transfer plan without opening CAN")
     parser.add_argument("--progress-interval", type=float, default=2.0, help="Progress reporting interval in seconds")
@@ -281,6 +287,7 @@ def main() -> int:
     inter_frame_delay_s = max(args.inter_frame_delay_ms, 0.0) / 1000.0
 
     start_timeout = max(args.start_ack_timeout, 0.01)
+    start_retry_delay = max(args.start_retry_delay, 0.0)
     start_part0 = (
         bytes([BOOT_CMD_START, 0]) + struct.pack("<I", total_size) + struct.pack("<H", crc32 & 0xFFFF)
     )
@@ -311,7 +318,8 @@ def main() -> int:
             except Exception as exc:
                 last_start_error = exc
                 print(f"start_retry={attempt + 1}/{max(args.start_retries, 1)} failed: {exc}")
-                time.sleep(0.2)
+                if start_retry_delay > 0.0:
+                    time.sleep(start_retry_delay)
     if last_start_error is not None:
         raise last_start_error
 
