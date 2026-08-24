@@ -38,7 +38,7 @@
 #define BOOT_METADATA_MAGIC 0x424F4F54UL
 #define BOOT_REQUEST_MAGIC 0xB00710ADUL
 #define BOOT_LAUNCH_APP_MAGIC 0xA991CAFEUL
-#define BOOT_RECOVERY_WINDOW_MS 1000UL
+#define BOOT_RECOVERY_WINDOW_MS 10000UL
 
 // Ensure that this matches `libvoltbro/voltbro/config/serial/serial.h` BaseConfigData EXACTLY
 typedef struct __attribute__((packed)) {
