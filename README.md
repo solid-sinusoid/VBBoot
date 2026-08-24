@@ -4,7 +4,7 @@
 
 The bootloader:
 - checks application validity at startup;
-- exposes a 1-second CAN recovery window before starting a valid application;
+- перед запуском валидного приложения открывает CAN recovery-окно на 10 секунд;
 - otherwise stays in boot mode and accepts firmware frames using the configured
   Classic CAN or CAN FD/BRS transport;
 - writes firmware to flash at `0x08003000..0x0801F7FF`;
@@ -12,10 +12,10 @@ The bootloader:
 
 ## Recovery window
 
-On a normal reset with a valid application and no explicit boot request, VBBoot
-listens on the drive's bootloader CAN ID for one second. A valid
-`BOOT_CMD_START` part 0 keeps the device in the bootloader so a broken
-application can be replaced without ST-Link.
+При обычном reset с валидным приложением и без явного boot request VBBoot
+в течение 10 секунд слушает bootloader CAN ID привода. Валидная первая часть
+`BOOT_CMD_START` оставляет устройство в bootloader, чтобы повреждённое
+приложение можно было заменить без ST-Link.
 
 If no update begins, VBBoot stores a one-shot launch marker and performs
 `NVIC_SystemReset()`. On the clean reset it consumes the marker and starts the
