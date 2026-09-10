@@ -83,7 +83,7 @@ static void boot_diag_tag(const char* tag) {
 }
 
 static void boot_diag_usart2_init(void) {
-    const uint32_t brr = HAL_RCC_GetPCLK1Freq() / 19200U;
+    const uint32_t brr = HAL_RCC_GetPCLK1Freq() / 115200U;
 
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_USART2_CLK_ENABLE();
@@ -484,6 +484,9 @@ void app(void) {
     boot_diag_note_reset_flags();
     if (app_valid && !boot_requested) {
         boot_diag_text("JAPP");
+        // Drain the final CRLF before the application reinitializes USART2.
+        while ((USART2->ISR & USART_ISR_TC) == 0U) {
+        }
         boot_jump_to_application();
     } else {
         boot_diag_note_loader_mode(app_valid, boot_requested);
