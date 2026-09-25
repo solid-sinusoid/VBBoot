@@ -33,7 +33,7 @@
 #define BOOT_FLASH_PAGE_SIZE 0x800UL
 #define CONFIG_EEPROM_I2C_DEV_ADDR 0x50U
 #define CONFIG_EEPROM_MEM_ADDR 0x0000U
-#define VBDRIVE_CONFIG_TYPE_ID 0x44AAABFFUL
+#define VBDRIVE_CONFIG_TYPE_ID 0x44AAAC00UL
 #define BOOT_REQUEST_MAGIC 0xB00710ADUL
 
 // Ensure that this matches `libvoltbro/voltbro/config/serial/serial.h` BaseConfigData EXACTLY

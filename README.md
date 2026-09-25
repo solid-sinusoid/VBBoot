@@ -44,7 +44,7 @@ When compiled with `BOOTLOADER_USE_EEPROM_CONFIG=ON`, VBBoot reads the EEPROM co
 - I2C bus: `I2C2` (`hi2c2`)
 - EEPROM device address: `0x50`
 - EEPROM offset: `0x0000`
-- Required `type_id`: `0x44AAABFF`
+- Required `type_id`: `0x44AAAC00`
 - Prefix format is same as libvoltbro BaseConfig:
 
 ```c
