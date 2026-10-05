@@ -27,6 +27,9 @@ static BootTransportConfig g_transport_config = {
 };
 
 static bool g_diag_ready = false;
+#if defined(BOOTLOADER_USE_EEPROM_CONFIG)
+static bool eeprom_config_read(BaseConfigData* config);
+#endif
 
 static void boot_diag_putc(char ch) {
     if (!g_diag_ready) {
@@ -82,8 +85,8 @@ static void boot_diag_tag(const char* tag) {
     boot_diag_space();
 }
 
-static void boot_diag_usart2_init(void) {
-    const uint32_t brr = HAL_RCC_GetPCLK1Freq() / 115200U;
+static void boot_diag_usart2_init(uint32_t baud) {
+    const uint32_t brr = HAL_RCC_GetPCLK1Freq() / baud;
 
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_USART2_CLK_ENABLE();
@@ -111,7 +114,12 @@ BootSession* get_boot_session(void) {
 }
 
 void boot_diag_init(void) {
-    boot_diag_usart2_init();
+    uint32_t baud = VOLTBRO_DEFAULT_SERIAL_BAUD;
+#if defined(BOOTLOADER_USE_EEPROM_CONFIG)
+    BaseConfigData config = {0};
+    if (eeprom_config_read(&config) && voltbro_base_config_valid(&config)) baud = config.serial_baud;
+#endif
+    boot_diag_usart2_init(baud);
     g_diag_ready = true;
 }
 
@@ -289,46 +297,7 @@ static bool is_valid_config_node_id(uint8_t node_id) {
     return (node_id >= 0x01U) && (node_id <= 0x7FU);
 }
 
-static bool nominal_baud_to_prescaler(uint8_t baud, uint8_t* prescaler) {
-    switch ((BootFdcanNominalBaud)baud) {
-        case FDCAN_NOMINAL_KHZ62:
-            *prescaler = 16U;
-            return true;
-        case FDCAN_NOMINAL_KHZ125:
-            *prescaler = 8U;
-            return true;
-        case FDCAN_NOMINAL_KHZ250:
-            *prescaler = 4U;
-            return true;
-        case FDCAN_NOMINAL_KHZ500:
-            *prescaler = 2U;
-            return true;
-        case FDCAN_NOMINAL_KHZ1000:
-            *prescaler = 1U;
-            return true;
-    }
-    return false;
-}
-
-static bool data_baud_to_prescaler(uint8_t baud, uint8_t* prescaler) {
-    switch ((BootFdcanDataBaud)baud) {
-        case FDCAN_DATA_KHZ1000:
-            *prescaler = 8U;
-            return true;
-        case FDCAN_DATA_KHZ2000:
-            *prescaler = 4U;
-            return true;
-        case FDCAN_DATA_KHZ4000:
-            *prescaler = 2U;
-            return true;
-        case FDCAN_DATA_KHZ8000:
-            *prescaler = 1U;
-            return true;
-    }
-    return false;
-}
-
-static bool eeprom_config_read(BootEepromConfigPrefix* config) {
+static bool eeprom_config_read(BaseConfigData* config) {
     if (HAL_I2C_IsDeviceReady(&hi2c2, CONFIG_EEPROM_I2C_DEV_ADDR << 1U, 2U, 100U) != HAL_OK) {
         return false;
     }
@@ -345,24 +314,17 @@ static bool eeprom_config_read(BootEepromConfigPrefix* config) {
 }
 
 static bool transport_config_load_eeprom(BootTransportConfig* config) {
-    BootEepromConfigPrefix stored = {0};
-    uint8_t nominal_prescaler = 0U;
-    uint8_t data_prescaler = 0U;
+    BaseConfigData stored = {0};
 
     if (!eeprom_config_read(&stored)) {
         return false;
     }
-    if ((stored.type_id != VBDRIVE_CONFIG_TYPE_ID) || !is_valid_config_node_id(stored.node_id)) {
+    if (!voltbro_base_config_valid(&stored) || !is_valid_config_node_id(stored.node_id)) {
         return false;
     }
-    if (!nominal_baud_to_prescaler(stored.fdcan_nominal_baud, &nominal_prescaler) ||
-        !data_baud_to_prescaler(stored.fdcan_data_baud, &data_prescaler)) {
-        return false;
-    }
-
     config->can_id = stored.node_id;
-    config->nominal_prescaler = nominal_prescaler;
-    config->data_prescaler = data_prescaler;
+    config->nominal_prescaler = voltbro_can_nominal_prescaler(stored.fdcan_nominal_baud);
+    config->data_prescaler = voltbro_can_data_prescaler(stored.fdcan_data_baud);
     transport_config_force_fd_brs(config);
     return true;
 }

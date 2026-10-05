@@ -32,36 +32,12 @@
 #endif
 #define BOOT_FLASH_PAGE_SIZE 0x800UL
 #define CONFIG_EEPROM_I2C_DEV_ADDR 0x50U
-#define CONFIG_EEPROM_MEM_ADDR 0x0000U
-#define VBDRIVE_CONFIG_TYPE_ID 0x44AAAC00UL
+#ifndef VB_CONFIG_ADDRESS
+#define VB_CONFIG_ADDRESS 0
+#endif
+#define CONFIG_EEPROM_MEM_ADDR VB_CONFIG_ADDRESS
+#include <voltbro/config/base_config.h>
 #define BOOT_REQUEST_MAGIC 0xB00710ADUL
-
-// Ensure that this matches `libvoltbro/voltbro/config/serial/serial.h` BaseConfigData EXACTLY
-typedef struct __attribute__((packed)) {
-    uint8_t was_configured;
-    uint8_t node_id;
-    uint8_t fdcan_nominal_baud;
-    uint8_t fdcan_data_baud;
-    uint32_t type_id;
-} BootEepromConfigPrefix;
-_Static_assert(sizeof(BootEepromConfigPrefix) == 8U, "Boot EEPROM config prefix must match BaseConfigData");
-
-// Ensure that this matches `libvoltbro/voltbro/config/serial/serial.h` FDCANNominalBaud EXACTLY
-typedef enum {
-    FDCAN_NOMINAL_KHZ62 = 0,
-    FDCAN_NOMINAL_KHZ125 = 1,
-    FDCAN_NOMINAL_KHZ250 = 2,
-    FDCAN_NOMINAL_KHZ500 = 3,
-    FDCAN_NOMINAL_KHZ1000 = 4
-} BootFdcanNominalBaud;
-
-// Ensure that this matches `libvoltbro/voltbro/config/serial/serial.h` FDCANDataBaud EXACTLY
-typedef enum {
-    FDCAN_DATA_KHZ1000 = 0,
-    FDCAN_DATA_KHZ2000 = 1,
-    FDCAN_DATA_KHZ4000 = 2,
-    FDCAN_DATA_KHZ8000 = 3
-} BootFdcanDataBaud;
 
 #define BL_STATUS_DONE 0xD0U
 #define BL_STATUS_ERR  0xE0U

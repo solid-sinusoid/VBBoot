@@ -39,23 +39,23 @@ The backup register transport config is kept for future/debug flows. If it is pr
 
 ### EEPROM Config
 
+The VBDrive parent build supplies `LIBVOLTBRO_DIR` automatically. Standalone
+builds use `Drivers/libvoltbro` by default; it must contain the shared header,
+or supply an explicit `-DLIBVOLTBRO_DIR=...`.
+
 When compiled with `BOOTLOADER_USE_EEPROM_CONFIG=ON`, VBBoot reads the EEPROM config prefix from external I2C EEPROM:
 
 - I2C bus: `I2C2` (`hi2c2`)
 - EEPROM device address: `0x50`
-- EEPROM offset: `0x0000`
-- Required `type_id`: `0x44AAAC00`
-- Prefix format is same as libvoltbro BaseConfig:
+- EEPROM offset: CMake `VB_CONFIG_ADDRESS`, default `0x0000`
+- Required common `type_id`: `0x01234567`
+- Format: the 28-byte `BaseConfigData` in `voltbro/config/base_config.h`
+- `node_id`, CAN baud indexes, `serial_baud`, and `name` belong to this common block.
 
-```c
-typedef struct __attribute__((packed)) {
-    uint8_t was_configured;
-    uint8_t node_id;
-    uint8_t fdcan_nominal_baud;
-    uint8_t fdcan_data_baud;
-    uint32_t type_id;
-} BootEepromConfigPrefix;
-```
+VBBoot includes that header directly. It does not inspect the application config
+or its type ID. UART diagnostics load `serial_baud` before the first message;
+missing or invalid common data falls back to 115200. The supported Serial rates
+are 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, and 1000000.
 
 Supported nominal baud enum values map to prescalers as in libvoltbro:
 
@@ -96,8 +96,11 @@ Or explicitly:
 cmake -S . -B build/RelWithDebInfo -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake \
   -DBOOTLOADER_FDCAN_ID_FORMAT=extended \
-  -DBOOTLOADER_USE_EEPROM_CONFIG=ON
-    cmake --build build/RelWithDebInfo
+  -DBOOTLOADER_USE_EEPROM_CONFIG=ON \
+  -DLIBVOLTBRO_DIR=/path/to/libvoltbro \
+  -DVB_CONFIG_ADDRESS=0
+cmake --build build/RelWithDebInfo
+```
 
 ### STM32G474 target
 
@@ -118,7 +121,6 @@ cmake -S . -B build/g474 \
 The G474 selection generates a 512 KiB/128 KiB bootloader linker layout while
 the default G431 layout, clocks, startup file, and validation bounds remain
 unchanged.
-```
 
 Post-build artifacts:
 - `VBBoot.elf`
@@ -142,7 +144,8 @@ pytest tests/test_bootloader_fdcan.py \
   --can-iface=socketcan \
   --can-channel=can0 \
   --ack-timeout=0.8 \
-       --node-id=0x444
+  --node-id=0x444
+```
 
 The SocketCAN uploader uses a 47-byte DATA chunk by default (one command byte
 plus 47 firmware bytes in a 48-byte CAN FD frame). Other supported chunks,
@@ -153,5 +156,4 @@ be selected with `--data-chunk-size` when the complete transport path supports
 Streaming DATA without per-frame ACKs is the default. START and DONE remain
 acknowledged, and DONE validates the complete size and CRC32. The default 3 ms
 inter-frame delay prevents receive FIFO overflow while internal flash is being
-programmed. Use `--ack-each-frame` for the legacy confirmed transfer mode.
-```
+programmed. Use `--ack-each-frame` for per-frame acknowledgement.

@@ -58,8 +58,22 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${USER_SOURCES}
 )
 
+set(VB_CONFIG_ADDRESS "0" CACHE STRING "Configuration byte address in storage")
+if(NOT VB_CONFIG_ADDRESS MATCHES "^(0[xX][0-9a-fA-F]+|[0-9]+)$")
+    message(FATAL_ERROR "VB_CONFIG_ADDRESS must be a non-negative decimal or hexadecimal address")
+endif()
+math(EXPR VB_CONFIG_ADDRESS_VALUE "${VB_CONFIG_ADDRESS}")
+if(VB_CONFIG_ADDRESS_VALUE LESS 0 OR VB_CONFIG_ADDRESS_VALUE GREATER 65508)
+    message(FATAL_ERROR "VB_CONFIG_ADDRESS exceeds the 16-bit EEPROM address range")
+endif()
+
+set(LIBVOLTBRO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Drivers/libvoltbro" CACHE PATH "libvoltbro shared config headers")
+if(NOT EXISTS "${LIBVOLTBRO_DIR}/voltbro/config/base_config.h")
+    message(FATAL_ERROR "Set LIBVOLTBRO_DIR to libvoltbro with the shared BaseConfigData header")
+endif()
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     App
+    ${LIBVOLTBRO_DIR}
 )
 
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
@@ -87,7 +101,7 @@ add_compile_options(
 target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE
     $<$<CONFIG:Release>: -Os -flto -fomit-frame-pointer>
     $<$<CONFIG:RelWithDebInfo>: -Os -g0 -flto>
-    $<$<CONFIG:Debug>: -Og -g3>
+    $<$<CONFIG:Debug>: -Os -g3 -flto>
 )
 
 if (NOT CMAKE_BUILD_TYPE MATCHES Debug)
@@ -120,3 +134,5 @@ add_custom_command(
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_boot_size.cmake
 )
 
+
+target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE VB_CONFIG_ADDRESS=${VB_CONFIG_ADDRESS_VALUE})
