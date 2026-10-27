@@ -27,7 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Flash VBBoot target over UART")
     parser.add_argument("--hex", required=True, help="Path to Intel HEX firmware file")
     parser.add_argument("--port", default="/dev/ttyACM0", help="UART device")
-    parser.add_argument("--baud", type=int, default=19200, help="UART baud rate")
+    parser.add_argument("--baud", type=int, default=115200, help="UART baud rate")
     parser.add_argument("--ack-timeout", type=float, default=3.0, help="ACK timeout in seconds")
     parser.add_argument("--chunk-size", type=int, default=63, help="DATA bytes per frame")
     parser.add_argument("--inter-frame-delay-ms", type=float, default=0.0)

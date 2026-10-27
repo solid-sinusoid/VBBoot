@@ -193,3 +193,13 @@ def test_uart_rejects_unversioned_image_before_opening_port(monkeypatch, tmp_pat
     else:
         raise AssertionError('unversioned firmware accepted')
     assert not opened
+
+
+def test_uart_default_matches_shared_bootloader_baud(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(SCRIPT.parent))
+    spec = importlib.util.spec_from_file_location('flash_bootloader_uart', SCRIPT.with_name('flash_bootloader_uart.py'))
+    uart = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(uart)
+    monkeypatch.setattr(uart.sys, 'argv', ['flash','--hex','candidate.hex'])
+    assert uart.parse_args().baud == 115200
