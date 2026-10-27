@@ -129,6 +129,15 @@ def test_valid_application_manifest_is_accepted() -> None:
     assert manifest["config_abi"] == MODULE.APP_CONFIG_ABI
 
 
+def test_fixed_manifest_near_end_fits_a_valid_last_can_fd_frame(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(MODULE, 'load_intel_hex', lambda *_: _manifest_image())
+    monkeypatch.setattr(MODULE.sys, 'argv', ['flash','--hex','candidate.hex','--dry-run'])
+    assert MODULE.main()==0
+    output=capsys.readouterr().out
+    assert 'image_size=116707 ' in output
+    assert 'dry_run_complete' in output
+
+
 def test_incompatible_config_abi_is_rejected() -> None:
     try:
         MODULE.validate_application_manifest(_manifest_image(config_abi=0x44AAABFE))

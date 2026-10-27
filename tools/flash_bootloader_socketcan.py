@@ -275,7 +275,12 @@ def main() -> int:
 
     image = load_intel_hex(Path(args.hex), args.app_end)
     manifest = validate_application_manifest(image) if args.app_end == APP_END_ADDR else None
-    padding_size = (-len(image)) % args.data_chunk_size
+    # The final CAN FD frame may use a smaller legal DLC. Padding every image
+    # to a full 63-byte chunk can cross the reserved recovery page.
+    padding_size = min(
+        (tail - len(image)) % args.data_chunk_size
+        for tail in FD_DATA_CHUNK_SIZES if tail <= args.data_chunk_size
+    )
     if padding_size:
         if APP_START_ADDR + len(image) + padding_size > args.app_end:
             raise ValueError("padded image exceeds application flash window")
