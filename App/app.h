@@ -25,7 +25,7 @@
 
 #define APP_START_ADDR 0x08003000UL
 #ifndef APP_END_ADDR
-#define APP_END_ADDR 0x08020000UL
+#define APP_END_ADDR 0x0801F800UL
 #endif
 #ifndef APP_RAM_END_ADDR
 #define APP_RAM_END_ADDR 0x20008000UL
@@ -37,7 +37,36 @@
 #endif
 #define CONFIG_EEPROM_MEM_ADDR VB_CONFIG_ADDRESS
 #include <voltbro/config/base_config.h>
+#if !defined(BOOTLOADER_BOARD_RUKA2)
+#define APP_MANIFEST_ADDR 0x0801F7C0UL
+#define APP_MANIFEST_MAGIC 0x50414256UL
+#define APP_MANIFEST_FORMAT_VERSION 1U
+#define APP_MANIFEST_BOARD_ID 0x31444256UL
+#define APP_BOOT_PROTOCOL_VERSION 1UL
+#define VBDRIVE_CONFIG_TYPE_ID 0x44AAAC06UL
+#define BOOT_METADATA_ADDR 0x0801F800UL
+#define BOOT_METADATA_MAGIC 0x424F4F54UL
+#endif
 #define BOOT_REQUEST_MAGIC 0xB00710ADUL
+#define BOOT_LAUNCH_APP_MAGIC 0xA991CAFEUL
+#define BOOT_RECOVERY_WINDOW_MS 1000UL
+
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    uint16_t format_version;
+    uint16_t header_size;
+    uint32_t board_id;
+    uint32_t config_abi;
+    uint32_t boot_protocol;
+    uint32_t app_start;
+    uint32_t app_end;
+    uint32_t flags;
+} BootApplicationManifest;
+_Static_assert(sizeof(BootApplicationManifest) == 32U, "Application manifest must remain stable");
+#if !defined(BOOTLOADER_BOARD_RUKA2)
+_Static_assert(APP_MANIFEST_ADDR + sizeof(BootApplicationManifest) <= APP_END_ADDR,
+               "Application manifest must fit before recovery metadata");
+#endif
 
 #define BL_STATUS_DONE 0xD0U
 #define BL_STATUS_ERR  0xE0U
@@ -78,6 +107,7 @@ extern FDCAN_HandleTypeDef hfdcan1;
 
 BootSession* get_boot_session(void);
 bool bootloader_start_requested(void);
+bool boot_update_activity_seen(void);
 void transport_config_load(void);
 const BootTransportConfig* transport_config_get(void);
 uint32_t boot_command_can_id(void);

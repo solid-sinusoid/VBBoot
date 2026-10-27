@@ -248,6 +248,20 @@ static void boot_request_unpack(uint32_t packed, BootTransportConfig* config) {
     config->bitrate_switch = ((packed >> BOOT_CFG_BITRATE_SWITCH_BIT) & 0x1U) != 0U;
 }
 
+static uint32_t boot_request_pack(const BootTransportConfig* config) {
+    uint32_t packed = config->can_id & BOOT_CFG_NODE_ID_MASK;
+
+    packed |= ((uint32_t)config->nominal_prescaler << BOOT_CFG_NOMINAL_SHIFT);
+    packed |= ((uint32_t)config->data_prescaler << BOOT_CFG_DATA_SHIFT);
+    if (config->fd_mode) {
+        packed |= (1UL << BOOT_CFG_FD_MODE_BIT);
+    }
+    if (config->bitrate_switch) {
+        packed |= (1UL << BOOT_CFG_BITRATE_SWITCH_BIT);
+    }
+    return packed;
+}
+
 static bool boot_request_read(BootTransportConfig* config, bool clear_request) {
     bool present;
 
@@ -344,11 +358,18 @@ static void transport_config_load_defaults(void) {
 
 void transport_config_load(void) {
     BootTransportConfig requested = {0};
+    uint32_t stored_packed = 0U;
 
     transport_config_load_defaults();
     (void)transport_config_load_eeprom(&g_transport_config);
     if (boot_request_read(&requested, true) && transport_config_is_valid(&requested)) {
         g_transport_config = requested;
+        (void)boot_metadata_store_transport(boot_request_pack(&requested));
+    } else if (boot_metadata_read_transport(&stored_packed)) {
+        boot_request_unpack(stored_packed, &requested);
+        if (transport_config_is_valid(&requested)) {
+            g_transport_config = requested;
+        }
     }
     transport_config_force_fd_brs(&g_transport_config);
 }
@@ -367,6 +388,24 @@ uint32_t boot_ack_can_id(void) {
 
 bool bootloader_start_requested(void) {
     return boot_request_read(NULL, false);
+}
+
+static bool boot_launch_app_marker_consume(void) {
+    bool present;
+
+    boot_request_access_enable();
+    present = (TAMP->BKP2R == BOOT_LAUNCH_APP_MAGIC);
+    if (present) {
+        TAMP->BKP2R = 0U;
+    }
+    boot_request_access_disable();
+    return present;
+}
+
+static void boot_launch_app_marker_set(void) {
+    boot_request_access_enable();
+    TAMP->BKP2R = BOOT_LAUNCH_APP_MAGIC;
+    boot_request_access_disable();
 }
 
 void boot_on_start(uint32_t size, uint32_t crc32) {
@@ -401,15 +440,24 @@ bool boot_on_data(uint32_t offset, const uint8_t* data, uint8_t size) {
 }
 
 bool boot_on_done(void) {
-    uint32_t final_crc;
+    uint32_t received_crc;
+    uint32_t flash_crc;
     bool ok;
 
     if (boot_session.state != BootStateReceiving) {
         return false;
     }
     boot_session.state = BootStateVerifyCrc;
-    final_crc = boot_session.running_crc32 ^ 0xFFFFFFFFUL;
-    ok = (boot_session.received_size == boot_session.expected_size) && (final_crc == boot_session.expected_crc32);
+    received_crc = boot_session.running_crc32 ^ 0xFFFFFFFFUL;
+    flash_crc = crc32_update(
+        0xFFFFFFFFUL,
+        (const uint8_t*)APP_START_ADDR,
+        boot_session.expected_size
+    ) ^ 0xFFFFFFFFUL;
+    ok = (boot_session.received_size == boot_session.expected_size) &&
+         (received_crc == boot_session.expected_crc32) &&
+         (flash_crc == boot_session.expected_crc32) &&
+         is_application_valid();
     if (!ok) {
         boot_session.state = BootStateError;
         return false;
@@ -418,6 +466,10 @@ bool boot_on_done(void) {
 }
 
 bool is_application_valid(void) {
+#if !defined(BOOTLOADER_BOARD_RUKA2)
+    const BootApplicationManifest* const manifest =
+        (const BootApplicationManifest*)APP_MANIFEST_ADDR;
+#endif
     const uint32_t app_sp = *(const uint32_t*)APP_START_ADDR;
     const uint32_t app_reset = *(const uint32_t*)(APP_START_ADDR + 4U);
     const uint32_t app_nmi = *(const uint32_t*)(APP_START_ADDR + 8U);
@@ -428,6 +480,19 @@ bool is_application_valid(void) {
     const bool hardfault_ok = (app_hardfault >= APP_START_ADDR) &&
                               (app_hardfault < APP_END_ADDR) &&
                               ((app_hardfault & 0x1UL) != 0U);
+#if defined(BOOTLOADER_BOARD_RUKA2)
+    const bool manifest_ok = true;
+#else
+    const bool manifest_ok =
+        (manifest->magic == APP_MANIFEST_MAGIC) &&
+        (manifest->format_version == APP_MANIFEST_FORMAT_VERSION) &&
+        (manifest->header_size == sizeof(BootApplicationManifest)) &&
+        (manifest->board_id == APP_MANIFEST_BOARD_ID) &&
+        (manifest->config_abi == VBDRIVE_CONFIG_TYPE_ID) &&
+        (manifest->boot_protocol == APP_BOOT_PROTOCOL_VERSION) &&
+        (manifest->app_start == APP_START_ADDR) &&
+        (manifest->app_end == APP_END_ADDR);
+#endif
 
     if ((app_sp == 0xFFFFFFFFUL) ||
         (app_reset == 0xFFFFFFFFUL) ||
@@ -436,22 +501,47 @@ bool is_application_valid(void) {
         return false;
     }
 
-    return stack_ok && reset_ok && nmi_ok && hardfault_ok;
+    return stack_ok && reset_ok && nmi_ok && hardfault_ok && manifest_ok;
 }
 
 void app(void) {
     const bool app_valid = is_application_valid();
     const bool boot_requested = bootloader_start_requested();
+    const bool launch_app_after_clean_reset =
+        (!boot_requested) && boot_launch_app_marker_consume();
 
     boot_diag_note_reset_flags();
-    if (app_valid && !boot_requested) {
+    if (app_valid && !boot_requested && launch_app_after_clean_reset) {
         boot_diag_text("JAPP");
         // Drain the final CRLF before the application reinitializes USART2.
         while ((USART2->ISR & USART_ISR_TC) == 0U) {
         }
         boot_jump_to_application();
+    }
+
+    boot_diag_note_loader_mode(app_valid, boot_requested);
+    if (app_valid && !boot_requested) {
+        const uint32_t recovery_started_ms = HAL_GetTick();
+
+        start_transport();
+        while ((HAL_GetTick() - recovery_started_ms) < BOOT_RECOVERY_WINDOW_MS) {
+            transport_loop();
+            if (boot_update_activity_seen()) {
+                boot_diag_text("RECOVERY");
+                while (1) {
+                    transport_loop();
+                }
+            }
+        }
+
+        /*
+         * Do not jump after FDCAN has run. Request one clean reset and consume
+         * this one-shot marker before starting the application on the next boot.
+         */
+        boot_diag_text("RAPP");
+        boot_launch_app_marker_set();
+        NVIC_SystemReset();
     } else {
-        boot_diag_note_loader_mode(app_valid, boot_requested);
         start_transport();
         while (1) {
             transport_loop();

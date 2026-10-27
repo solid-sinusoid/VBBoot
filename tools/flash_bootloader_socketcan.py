@@ -10,7 +10,15 @@ from pathlib import Path
 
 
 APP_START_ADDR = 0x08003000
-DEFAULT_APP_END_ADDR = 0x08020000
+APP_END_ADDR = 0x0801F800
+DEFAULT_APP_END_ADDR = APP_END_ADDR
+APP_MANIFEST_ADDR = 0x0801F7C0
+APP_MANIFEST_FORMAT = "<IHHIIIIII"
+APP_MANIFEST_MAGIC = 0x50414256
+APP_MANIFEST_VERSION = 1
+APP_MANIFEST_BOARD_ID = 0x31444256
+APP_CONFIG_ABI = 0x44AAAC06
+APP_BOOT_PROTOCOL = 1
 BOOT_CMD_START = 1
 BOOT_CMD_DATA = 2
 BOOT_CMD_DONE = 3
@@ -29,6 +37,8 @@ CAN_FRAME_FORMAT = "=IB3x8s"
 CAN_FRAME_SIZE = struct.calcsize(CAN_FRAME_FORMAT)
 CANFD_FRAME_FORMAT = "=IBBBB64s"
 CANFD_FRAME_SIZE = struct.calcsize(CANFD_FRAME_FORMAT)
+# VBBoot commits data to flash in 8-byte doublewords.  An exact 8-byte payload
+# avoids carrying a partial internal buffer across CAN transfers.
 FD_DATA_CHUNK_SIZES = (7, 11, 15, 19, 23, 31, 47, 63)
 
 
@@ -51,9 +61,21 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--ack-timeout", type=float, default=1.5, help="ACK timeout in seconds")
     parser.add_argument(
+        "--start-ack-timeout",
+        type=float,
+        default=0.08,
+        help="ACK timeout for each START probe; use a short value to catch the cold-start recovery window",
+    )
+    parser.add_argument(
+        "--start-retry-delay",
+        type=float,
+        default=0.02,
+        help="Delay between failed START probes in seconds",
+    )
+    parser.add_argument(
         "--data-chunk-size",
         type=int,
-        default=47,
+        default=63,
         help="DATA bytes per command frame, excluding the command byte",
     )
     parser.add_argument(
@@ -62,13 +84,16 @@ def parse_args() -> argparse.Namespace:
         default=3.0,
         help="Delay after each successful ACK before sending the next frame",
     )
-    parser.add_argument("--start-retries", type=int, default=8, help="Retries for the START handshake")
+    parser.add_argument("--start-retries", type=int, default=200, help="Retries for the START handshake")
     parser.add_argument(
         "--ack-each-frame",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help="Use legacy DATA frames with one ACK per frame instead of streaming DATA",
     )
     parser.add_argument("--brs", action="store_true", help="Enable CAN FD bitrate switching")
+    parser.add_argument("--dry-run", action="store_true", help="Validate the image and print the transfer plan without opening CAN")
+    parser.add_argument("--progress-interval", type=float, default=2.0, help="Progress reporting interval in seconds")
     return parser.parse_args()
 
 
@@ -123,6 +148,47 @@ def load_intel_hex(path: Path, app_end_addr: int = DEFAULT_APP_END_ADDR) -> byte
     for addr, value in data_map.items():
         image[addr - APP_START_ADDR] = value
     return bytes(image)
+
+
+def validate_application_manifest(image: bytes) -> dict[str, int]:
+    offset = APP_MANIFEST_ADDR - APP_START_ADDR
+    manifest_size = struct.calcsize(APP_MANIFEST_FORMAT)
+    if len(image) < offset + manifest_size:
+        raise ValueError(
+            "application compatibility manifest is missing; refusing to erase a drive with an unversioned image"
+        )
+
+    fields = struct.unpack_from(APP_MANIFEST_FORMAT, image, offset)
+    names = (
+        "magic",
+        "format_version",
+        "header_size",
+        "board_id",
+        "config_abi",
+        "boot_protocol",
+        "app_start",
+        "app_end",
+        "flags",
+    )
+    manifest = dict(zip(names, fields))
+    expected = {
+        "magic": APP_MANIFEST_MAGIC,
+        "format_version": APP_MANIFEST_VERSION,
+        "header_size": manifest_size,
+        "board_id": APP_MANIFEST_BOARD_ID,
+        "config_abi": APP_CONFIG_ABI,
+        "boot_protocol": APP_BOOT_PROTOCOL,
+        "app_start": APP_START_ADDR,
+        "app_end": APP_END_ADDR,
+    }
+    mismatches = [
+        f"{name}=0x{manifest[name]:X} expected=0x{value:X}"
+        for name, value in expected.items()
+        if manifest[name] != value
+    ]
+    if mismatches:
+        raise ValueError("incompatible application manifest: " + ", ".join(mismatches))
+    return manifest
 
 
 def normalize_can_id(can_id: int, extended: bool) -> int:
@@ -208,6 +274,7 @@ def main() -> int:
         )
 
     image = load_intel_hex(Path(args.hex), args.app_end)
+    manifest = validate_application_manifest(image) if args.app_end == APP_END_ADDR else None
     padding_size = (-len(image)) % args.data_chunk_size
     if padding_size:
         if APP_START_ADDR + len(image) + padding_size > args.app_end:
@@ -225,33 +292,40 @@ def main() -> int:
         f"image_size={total_size} crc32=0x{crc32:08X} chunk={args.data_chunk_size} "
         f"brs={int(args.brs)} pace_ms={args.inter_frame_delay_ms:.3f}"
     )
+    if manifest is not None:
+        print(
+            f"manifest=ok board_id=0x{manifest['board_id']:08X} "
+            f"config_abi=0x{manifest['config_abi']:08X} boot_protocol={manifest['boot_protocol']}"
+        )
+
+    total_frames = (total_size + args.data_chunk_size - 1) // args.data_chunk_size
+    print(f"transfer_plan_frames={total_frames} dry_run={int(args.dry_run)}")
+    if args.dry_run:
+        print("dry_run_complete")
+        return 0
 
     inter_frame_delay_s = max(args.inter_frame_delay_ms, 0.0) / 1000.0
 
-    with open_can_socket(args.channel, ack_id, extended) as sock:
-        start_timeout = max(args.ack_timeout, 5.0)
-        start_part0 = (
-            bytes([BOOT_CMD_START, 0]) + struct.pack("<I", total_size) + struct.pack("<H", crc32 & 0xFFFF)
-        )
-        start_part1 = bytes([BOOT_CMD_START, 1]) + struct.pack("<H", (crc32 >> 16) & 0xFFFF)
-        last_start_error: Exception | None = None
+    start_timeout = max(args.start_ack_timeout, 0.01)
+    start_retry_delay = max(args.start_retry_delay, 0.0)
+    start_part0 = (
+        bytes([BOOT_CMD_START, 0]) + struct.pack("<I", total_size) + struct.pack("<H", crc32 & 0xFFFF)
+    )
+    start_part1 = bytes([BOOT_CMD_START, 1]) + struct.pack("<H", (crc32 >> 16) & 0xFFFF)
+    last_start_error: Exception | None = None
+
+    # Recovery probing intentionally uses a disposable socket.  A response can
+    # arrive just after a short probe timeout and remain queued.  Reusing that
+    # socket would let the stale ACK satisfy START[1] or a DATA request, putting
+    # the host one frame ahead of the bootloader and silently dropping data.
+    with open_can_socket(args.channel, ack_id, extended) as probe_sock:
         for attempt in range(max(args.start_retries, 1)):
             try:
                 send_wait_ack(
-                    sock,
+                    probe_sock,
                     command_id,
                     ack_id,
                     start_part0,
-                    start_timeout,
-                    args.brs,
-                    extended,
-                    inter_frame_delay_s,
-                )
-                send_wait_ack(
-                    sock,
-                    command_id,
-                    ack_id,
-                    start_part1,
                     start_timeout,
                     args.brs,
                     extended,
@@ -264,12 +338,39 @@ def main() -> int:
             except Exception as exc:
                 last_start_error = exc
                 print(f"start_retry={attempt + 1}/{max(args.start_retries, 1)} failed: {exc}")
-                time.sleep(0.2)
-        if last_start_error is not None:
-            raise last_start_error
+                if start_retry_delay > 0.0:
+                    time.sleep(start_retry_delay)
+    if last_start_error is not None:
+        raise last_start_error
+
+    # Closing probe_sock discards all delayed probe ACKs.  Repeat both START
+    # parts on a fresh socket before erasing/writing the application.
+    with open_can_socket(args.channel, ack_id, extended) as sock:
+        send_wait_ack(
+            sock,
+            command_id,
+            ack_id,
+            start_part0,
+            args.ack_timeout,
+            args.brs,
+            extended,
+            inter_frame_delay_s,
+        )
+        send_wait_ack(
+            sock,
+            command_id,
+            ack_id,
+            start_part1,
+            args.ack_timeout,
+            args.brs,
+            extended,
+            inter_frame_delay_s,
+        )
 
         offset = 0
         frame_index = 0
+        transfer_started = time.monotonic()
+        next_progress = transfer_started
         while offset < total_size:
             chunk = image[offset : offset + args.data_chunk_size]
             command = BOOT_CMD_DATA if args.ack_each_frame else BOOT_CMD_DATA_STREAM
@@ -283,8 +384,17 @@ def main() -> int:
                     time.sleep(inter_frame_delay_s)
             offset += len(chunk)
             frame_index += 1
-            if (frame_index % 128) == 0 or offset == total_size:
-                print(f"data_progress={offset}/{total_size}")
+            now = time.monotonic()
+            if now >= next_progress or offset == total_size:
+                elapsed = max(now - transfer_started, 1e-6)
+                rate = offset / elapsed
+                eta = (total_size - offset) / rate if rate > 0.0 else float("inf")
+                print(
+                    f"data_progress={offset}/{total_size} frames={frame_index}/{total_frames} "
+                    f"rate_Bps={rate:.1f} eta_s={eta:.1f}",
+                    flush=True,
+                )
+                next_progress = now + max(args.progress_interval, 0.1)
 
         send_wait_ack(
             sock,
@@ -298,6 +408,7 @@ def main() -> int:
         )
 
     print("flash_complete")
+    print("post_flash_verification_required=application_node_and_safe_state")
     return 0
 
 
