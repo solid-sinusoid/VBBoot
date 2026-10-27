@@ -361,11 +361,11 @@ void transport_config_load(void) {
     uint32_t stored_packed = 0U;
 
     transport_config_load_defaults();
-    (void)transport_config_load_eeprom(&g_transport_config);
+    const bool have_eeprom_config = transport_config_load_eeprom(&g_transport_config);
     if (boot_request_read(&requested, true) && transport_config_is_valid(&requested)) {
         g_transport_config = requested;
         (void)boot_metadata_store_transport(boot_request_pack(&requested));
-    } else if (boot_metadata_read_transport(&stored_packed)) {
+    } else if (!have_eeprom_config && boot_metadata_read_transport(&stored_packed)) {
         boot_request_unpack(stored_packed, &requested);
         if (transport_config_is_valid(&requested)) {
             g_transport_config = requested;

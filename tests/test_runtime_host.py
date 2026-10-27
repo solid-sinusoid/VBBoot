@@ -82,3 +82,34 @@ int main(void){
                     '-I'+str(ROOT/'App'),'-I'+str(library),str(tmp_path/'runtime.c'),
                     '-o',str(tmp_path/'runtime')],check=True)
     subprocess.run([str(tmp_path/'runtime')],check=True)
+
+
+def test_current_eeprom_transport_wins_over_stale_recovery_metadata(tmp_path):
+    app=(ROOT/'App/app.c').read_text()
+    source=r'''
+#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+typedef struct {uint32_t can_id;uint8_t nominal_prescaler,data_prescaler;bool fd_mode,bitrate_switch;} BootTransportConfig;
+static BootTransportConfig g_transport_config;
+static bool valid_eeprom=true,valid_request=false,valid_metadata=true;
+void transport_config_load_defaults(void){g_transport_config=(BootTransportConfig){.can_id=0x444};}
+bool transport_config_load_eeprom(BootTransportConfig* out){if(valid_eeprom)out->can_id=11;return valid_eeprom;}
+bool boot_request_read(BootTransportConfig* out,bool clear){(void)clear;if(valid_request)out->can_id=12;return valid_request;}
+bool transport_config_is_valid(const BootTransportConfig* config){return config->can_id!=0;}
+uint32_t boot_request_pack(const BootTransportConfig* config){return config->can_id;}
+bool boot_metadata_store_transport(uint32_t packed){(void)packed;return true;}
+bool boot_metadata_read_transport(uint32_t* out){*out=7;return valid_metadata;}
+void boot_request_unpack(uint32_t value,BootTransportConfig* out){out->can_id=value;}
+void transport_config_force_fd_brs(BootTransportConfig* out){out->fd_mode=true;out->bitrate_switch=true;}
+''' + function(app,'void transport_config_load(void)') + r'''
+int main(void){
+ transport_config_load();assert(g_transport_config.can_id==11);
+ valid_request=true;transport_config_load();assert(g_transport_config.can_id==12);
+ valid_request=false;valid_eeprom=false;transport_config_load();assert(g_transport_config.can_id==7);
+ valid_metadata=false;transport_config_load();assert(g_transport_config.can_id==0x444);
+}
+'''
+    (tmp_path/'transport.c').write_text(source)
+    subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror',str(tmp_path/'transport.c'),'-o',str(tmp_path/'transport')],check=True)
+    subprocess.run([str(tmp_path/'transport')],check=True)
